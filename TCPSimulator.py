@@ -79,9 +79,7 @@ def checksum16(data):
     halfwords = getHalfWords(listOfBits)
 
     checksumBits = calculatechecksum(halfwords)
-    print(checksumBits)
     REALCHECKSUM = convertToBytes(checksumBits)
-    print("here's the real checksum",REALCHECKSUM)
     return REALCHECKSUM
 
 #this converts a string of bits into bytes
@@ -156,9 +154,15 @@ class TCPClient:
     This class implements the client side of the simulation, which breaks
     up messages into small packets and then sends them to the server.
     """
-
+    
     def __init__(self):
         """Initializes the client structure."""
+
+
+    #returns the number of the packet it's lookingfor
+    def getSeq(self):
+        return self.seq
+
 
     def requestMessage(self, eventQueue, t):
         """Initiates transmission of a message requested from the user."""
@@ -178,16 +182,27 @@ class TCPClient:
         if self.seq + nBytes == len(self.msgBytes):
             p.FIN = True
 
-        p.checksum = (checksum16(p.toBytes()) ^ 0xFF ) 
-        # print checksum
+        #adding the checksum to the packet
+        p.checksum = (checksum16(p.toBytes()) ^ 0xFFFF ) 
 
-        print("the data in p are" , p.seq,p.ack,True,p.data)
-        print("the bytes are ", p.toBytes())
-        print("checksum is ", hex(p.checksum))
+
+        #adds event for server to receive this packet
         e = ReceivePacketEvent(self.server, p)
-        eventQueue.enqueue(e, t + TRANSMISSION_DELAY)
-        if p.FIN:
-            self.queueRequestMessage(eventQueue, t + ROUND_TRIP_TIME)
+
+
+
+        #there's a chance that the packet will be lost:
+        import random
+        if(random.random()>LOST_PACKET_PROBABILITY):
+
+            eventQueue.enqueue(e, t + TRANSMISSION_DELAY)
+            if p.FIN:
+                self.queueRequestMessage(eventQueue, t + ROUND_TRIP_TIME)
+        
+        #remember to add a timeout event
+        toe = TimeoutEvent(self.server, p)
+        eventQueue.enqueue(toe, t + 2*TRANSMISSION_DELAY)
+
 
     def receivePacket(self, p, eventQueue, t):
         """Handles receipt of the acknowledgment packet."""
@@ -210,12 +225,28 @@ class TCPServer:
     def __init__(self):
         self.resetForNextMessage()
 
+    #returns the number of the packet it's lookingfor
+    def getSeq(self):
+        return self.seq
+
     def receivePacket(self, p, eventQueue, t):
         """
         Handles packets sent from the server and sends an acknowledgment
         back in return.  This version assumes that the sequence numbers
         appear in the correct order.
         """
+        # check the checksum
+
+        curentCheckSum = p.checksum
+        p.checksum = 0x0000
+        calculatedChecksum = checksum16(p.toBytes())
+        p.checksum = curentCheckSum
+        #print("cur check is ",hex(curentCheckSum))
+        #print("trying it gives" , hex(checksum16(p.toBytes())))
+        if (curentCheckSum + calculatedChecksum) != 0xFFFF:
+            print("checksum addition failed, got ",hex(curentCheckSum + checksum16(p.toBytes())))
+ 
+
         self.msgBytes.extend(p.data)
         self.seq = p.ack
         self.ack = p.seq + len(p.data)
@@ -224,8 +255,13 @@ class TCPServer:
             reply.FIN = True
             print("Server receives \"" + self.msgBytes.decode("UTF-8") + "\"")
             self.resetForNextMessage()
+
+
         e = ReceivePacketEvent(self.client, reply)
         eventQueue.enqueue(e, t + TRANSMISSION_DELAY)
+        #remember to add a timeout event
+        toe = TimeoutEvent(self.client, reply)
+        eventQueue.enqueue(toe, t + 2*TRANSMISSION_DELAY)
 
     def resetForNextMessage(self):
         """Initializes the data structures for holding the message."""
@@ -264,6 +300,28 @@ class RequestMessageEvent(TCPEvent):
 
     def dispatch(self, eventQueue, t):
         self.client.requestMessage(eventQueue, t)
+
+class TimeoutEvent(TCPEvent):
+    '''
+    This is called when a packet is lost!
+    '''
+    def __init__(self,handler,packet):
+        TCPEvent.__init__(self)
+        self.handler = handler
+        self.packet = packet
+    def __str__(self):
+        return "TimeoutPacket("+str(self.packet)+")"
+    
+    # have to resend packet if packet hasn't been received by the time this
+    # event comes up.
+    def dispatch(self,eventQueue,t):
+        # nothing happens if we don't need this packet resent 
+        if self.handler.getSeq() >= self.packet.seq:
+            return
+        # if we're still waiting for the packet, resend it.
+        print("resending packet:",self.packet.seq,":",self.packet.data)
+        e = ReceivePacketEvent(self.handler, self.packet)
+        eventQueue.enqueue(e, t + TRANSMISSION_DELAY)
 
 
 class ReceivePacketEvent(TCPEvent):
