@@ -23,7 +23,7 @@ This module implements the starter version of the TCP simulator assignment.
 # Problem 3 means that you need to have the client keep track of the
 # number of unacknowledged packets and to pay attention to the receive
 # window in the acknowledgments that come in from the server.
-
+import random
 from packet import TCPPacket
 from pqueue import PriorityQueue
 
@@ -157,11 +157,68 @@ class TCPClient:
     
     def __init__(self):
         """Initializes the client structure."""
+    def __str___(self):
+        return "Client"
 
 
     #returns the number of the packet it's lookingfor
     def getSeq(self):
         return self.seq
+
+
+
+    def requestXPackets(self, eventQueue, t):
+        msg = input("Enter a message: ")
+        windowSize = input("how big should this window be?")
+        if (len(msg) != 0):
+            print("Client sends \"" + msg + "\"")
+            self.msgBytes = msg.encode("UTF-8")
+            self.seq = 0
+            self.ack = 0
+            self.sendXPackets(eventQueue, t,windowSize)
+
+    def sendXPackets(self,eventQueue,t,x):
+        
+        #creates the packets
+        packets = []
+        for i in range(x):
+            nBytes = min(MAX_PACKET_DATA, len(self.msgBytes) - self.seq)
+            
+            # if self.seq extends the amount of data in msgBytes, there're 
+            # no more packets to make
+            if self.seq > len(self.msgBytes):
+                break
+
+            data = self.msgBytes[self.seq:self.seq + nBytes]
+
+            p = TCPPacket(seq=self.seq,ack=self.ack,ACK =True, data=data) # no reason to have ack here?
+            #adding the checksum to the packet
+            p.checksum = (checksum16(p.toBytes()) ^ 0xFFFF ) 
+            packets.append[p]        
+            #add to sequence
+            self.seq += nBytes
+
+
+
+
+        #now to send all the packets!
+        for p in packets:
+            e = ReceivePacketEvent(self.server, p)
+
+            #there's a chance that the packet will be lost:        
+            if(random.random()>LOST_PACKET_PROBABILITY):
+
+                eventQueue.enqueue(e, t + TRANSMISSION_DELAY)
+                if p.FIN:
+                    self.queueRequestMessage(eventQueue, t + ROUND_TRIP_TIME)
+            
+            #remember to add a timeout event
+            toe = TimeoutEvent(self.server, p)
+            eventQueue.enqueue(toe, t + 2*TRANSMISSION_DELAY)
+            t+=1
+
+
+
 
 
     def requestMessage(self, eventQueue, t):
@@ -173,6 +230,9 @@ class TCPClient:
             self.seq = 0
             self.ack = 0
             self.sendNextPacket(eventQueue, t)
+
+    
+
 
     def sendNextPacket(self, eventQueue, t):
         """Sends the next packet in the message."""
@@ -189,10 +249,7 @@ class TCPClient:
         #adds event for server to receive this packet
         e = ReceivePacketEvent(self.server, p)
 
-
-
-        #there's a chance that the packet will be lost:
-        import random
+        #there's a chance that the packet will be lost:        
         if(random.random()>LOST_PACKET_PROBABILITY):
 
             eventQueue.enqueue(e, t + TRANSMISSION_DELAY)
@@ -204,10 +261,12 @@ class TCPClient:
         eventQueue.enqueue(toe, t + 2*TRANSMISSION_DELAY)
 
 
+
+
     def receivePacket(self, p, eventQueue, t):
         """Handles receipt of the acknowledgment packet."""
         self.seq = p.ack
-        self.ack = p.seq + 1
+        self.ack = p.seq + len(p.data) # irrelevant, idk why this is here
         if self.seq < len(self.msgBytes):
             self.sendNextPacket(eventQueue, t)
 
@@ -224,6 +283,12 @@ class TCPServer:
 
     def __init__(self):
         self.resetForNextMessage()
+        self.seq = 0
+        self.ack = 0
+        self.receivedPackets = []
+
+    def __str___(self):
+        return "Server"
 
     #returns the number of the packet it's lookingfor
     def getSeq(self):
@@ -235,27 +300,31 @@ class TCPServer:
         back in return.  This version assumes that the sequence numbers
         appear in the correct order.
         """
-        # check the checksum
-
-        curentCheckSum = p.checksum
-        p.checksum = 0x0000
-        calculatedChecksum = checksum16(p.toBytes())
-        p.checksum = curentCheckSum
-        #print("cur check is ",hex(curentCheckSum))
-        #print("trying it gives" , hex(checksum16(p.toBytes())))
-        if (curentCheckSum + calculatedChecksum) != 0xFFFF:
-            print("checksum addition failed, got ",hex(curentCheckSum + checksum16(p.toBytes())))
- 
 
         self.msgBytes.extend(p.data)
-        self.seq = p.ack
-        self.ack = p.seq + len(p.data)
+
+        self.receivedPackets.append(p.seq)
+
+        pointOfLastCompleteSet = 0
+        #if this packet completes a set, then self.ack is incremented alot
+        for i in range(len(self.receivedPackets)):
+            
+            if (i * len(p.data)) in self.receivedPackets:
+
+                pointOfLastCompleteSet = i
+            else:
+                
+                break
+
+        self.ack = self.receivedPackets[pointOfLastCompleteSet] + len(p.data)
+        self.seq = self.ack
         reply = TCPPacket(seq=self.seq, ack=self.ack, ACK=True)
         if p.FIN:
             reply.FIN = True
             print("Server receives \"" + self.msgBytes.decode("UTF-8") + "\"")
             self.resetForNextMessage()
-
+        #adding the checksum to the packet
+        reply.checksum = (checksum16(reply.toBytes()) ^ 0xFFFF ) 
 
         e = ReceivePacketEvent(self.client, reply)
         eventQueue.enqueue(e, t + TRANSMISSION_DELAY)
@@ -266,7 +335,7 @@ class TCPServer:
     def resetForNextMessage(self):
         """Initializes the data structures for holding the message."""
         self.msgBytes = bytearray()
-        self.ack = 0
+        #self.ack = 0
 
 
 class TCPEvent:
@@ -301,28 +370,43 @@ class RequestMessageEvent(TCPEvent):
     def dispatch(self, eventQueue, t):
         self.client.requestMessage(eventQueue, t)
 
+
+
 class TimeoutEvent(TCPEvent):
     '''
     This is called when a packet is lost!
     '''
-    def __init__(self,handler,packet):
+    def __init__(self,handler,packet):#,otherGuy):
         TCPEvent.__init__(self)
         self.handler = handler
         self.packet = packet
+        #self.other = otherGuy #this is the other computer, not this one
     def __str__(self):
         return "TimeoutPacket("+str(self.packet)+")"
-    
+
+
     # have to resend packet if packet hasn't been received by the time this
     # event comes up.
     def dispatch(self,eventQueue,t):
+
+        print("right now the",str(self.handler),"'s sequence is ",self.handler.getSeq())
+
         # nothing happens if we don't need this packet resent 
         if self.handler.getSeq() >= self.packet.seq:
             return
         # if we're still waiting for the packet, resend it.
         print("resending packet:",self.packet.seq,":",self.packet.data)
-        e = ReceivePacketEvent(self.handler, self.packet)
-        eventQueue.enqueue(e, t + TRANSMISSION_DELAY)
-
+        
+        #there's a chance that the packet will be lost:
+        if(random.random()>LOST_PACKET_PROBABILITY):
+            
+            e = ReceivePacketEvent(self.handler, self.packet)
+            eventQueue.enqueue(e, t + TRANSMISSION_DELAY)
+        
+        # vv this is bad news
+        print("t is",t)
+        toe = TimeoutEvent(self.handler, self.packet)
+        eventQueue.enqueue(toe, t + 2*TRANSMISSION_DELAY)
 
 class ReceivePacketEvent(TCPEvent):
     """
@@ -343,6 +427,20 @@ class ReceivePacketEvent(TCPEvent):
         return "ReceivePacket(" + str(self.packet) + ")"
 
     def dispatch(self, eventQueue, t):
+        p =self.packet
+        # check the checksum
+        curentCheckSum = p.checksum
+        p.checksum = 0x0000
+        calculatedChecksum = checksum16(p.toBytes())
+        p.checksum = curentCheckSum
+        # print("cur check is ",(curentCheckSum))
+        # print("trying it gives" , (calculatedChecksum))
+        # print("if you add those you get ",(curentCheckSum + calculatedChecksum))
+        # print("the hex of that is ", hex(curentCheckSum + calculatedChecksum))
+        if (curentCheckSum + calculatedChecksum) != 0xFFFF:
+            print("checksum addition failed, got ",hex(curentCheckSum + checksum16(p.toBytes())))
+ 
+
         self.handler.receivePacket(self.packet, eventQueue, t)
 
 # Startup code

@@ -90,31 +90,31 @@ class PriorityQueue:
             raise IndexError("peekPriority called on an empty queue")
         return self.array[0].priority
 
-# Implementation notes: _expandCapacity
-# -------------------------------------
-# The expandCapacity method allocates a array of twice the previous
-# size, copies the old elements to the array, and then replaces the
-# old array with the one.
+    # Implementation notes: _expandCapacity
+    # -------------------------------------
+    # The expandCapacity method allocates a array of twice the previous
+    # size, copies the old elements to the array, and then replaces the
+    # old array with the one.
 
-    def _expandCapacity(self):
+    def expandCapacity(self):
         self.capacity *= 2
         newArray = [ None ] * self.capacity
         for i in range(self.count):
             newArray[i] = self.array[i]
         self.array = newArray
 
-# Constants
+    # Constants
 
     INITIAL_CAPACITY = 10
 
-# Implementation notes: PQEntry
-# -----------------------------
-# This private class combines three values: a value, a priority,
-# and a timestamp.  The timestamp is used to break ties between
-# items of equal priority and therefore ensures that such items
-# obey the standard first-in/first-out queue discipline.  This
-# class implements the less-than operator to simplify priority
-# comparisons.
+    # Implementation notes: PQEntry
+    # -----------------------------
+    # This private class combines three values: a value, a priority,
+    # and a timestamp.  The timestamp is used to break ties between
+    # items of equal priority and therefore ensures that such items
+    # obey the standard first-in/first-out queue discipline.  This
+    # class implements the less-than operator to simplify priority
+    # comparisons.
 
     class PQEntry:
         def __init__(self, value, priority, timestamp):
