@@ -180,7 +180,8 @@ class TCPClient:
 
         #cool I got an ack, now I need to choose how to respond
         
-
+        print("receiving packet! now I should send %r" % self.ack )
+        print(str(eventQueue))
         if self.seq < len(self.msgBytes) + len(p.data):
             
             self.sendXPackets(eventQueue,t,self.x)
@@ -256,8 +257,9 @@ class TCPClient:
             if(random.random()>LOST_PACKET_PROBABILITY):
                 print("packet %r isn't lost"% p.data)
                 eventQueue.enqueue(e, t + TRANSMISSION_DELAY)
-                if p.FIN:
-                    self.queueRequestMessage(eventQueue, 66 +t + ROUND_TRIP_TIME)
+                #I'm moving this to when the serverreceives the last message
+                #if p.FIN:
+                    #self.queueRequestMessage(eventQueue, 66 +t + ROUND_TRIP_TIME)
             else: 
                 #if lost
                 print("packet %r is LOST!!!"% p.data)
@@ -320,6 +322,7 @@ class TCPServer:
         self.resetForNextMessage()
         self.seq = 0
         self.ack = 0
+        # this is a list of the packets' acks
         self.receivedPackets = []
 
     def __str__(self):
@@ -333,6 +336,8 @@ class TCPServer:
         """Initializes the data structures for holding the message."""
         self.msgBytes = bytearray()
         self.ack = 0
+        self.seq = 0
+        self.receivedPackets =[]
 
 
     def receivePacket(self, p, eventQueue, t):
@@ -352,6 +357,7 @@ class TCPServer:
 
         self.receivedPackets.append(p.seq)
 
+        print("here are the packets I've received:",self.receivedPackets )
         pointOfLastCompleteSet = 0
         #if this packet completes a set, then self.ack is incremented alot
         for i in range(len(self.receivedPackets)):
@@ -363,14 +369,22 @@ class TCPServer:
                 
                 break
 
+
         self.ack = self.receivedPackets[pointOfLastCompleteSet] + len(p.data)
         self.seq = self.ack
+        print("server received %r and its seq/ack is now %r" % (p.data,self.ack))
         reply = TCPPacket(seq=self.seq, ack=self.ack, ACK=True)
-        if p.FIN:
+        
+
+
+        if p.FIN and self.ack >= p.seq: #I should also check here to make sure last complete set is here
             reply.FIN = True
             print("Server receives \"" + self.msgBytes.decode("UTF-8") + "\"")
             print("Cool I got all the packets! ")
             self.resetForNextMessage()
+            eventQueue.clear()
+            self.client.queueRequestMessage(eventQueue, t + ROUND_TRIP_TIME)
+
         #adding the checksum to the packet
         reply.checksum = (checksum16(reply.toBytes()) ^ 0xFFFF ) 
 
@@ -378,9 +392,6 @@ class TCPServer:
         # here is where we should send the ack
         e = ReceivePacketEvent(self.client, reply)
         eventQueue.enqueue(e, t + TRANSMISSION_DELAY)
-        #remember to add a timeout event
-        toe = TimeoutEvent(self.client, reply)
-        eventQueue.enqueue(toe, t + 2*TRANSMISSION_DELAY)
 
     
 
@@ -434,28 +445,29 @@ class TimeoutEvent(TCPEvent):
     # have to resend packet if packet hasn't been received by the time this
     # event comes up.
     def dispatch(self,eventQueue,t):
-
+        print("TIMEOUT EVENT~!")
         print("right now the",str(self.handler),"'s sequence is ",self.handler.getSeq())
-        #print("timeout event trigger")
+
+        print("I'm the timout event for %r with a seq of %r" % (self.packet.data,self.packet.seq))
         # nothing happens if we don't need this packet resent 
-        if self.handler.getSeq() >= self.packet.seq:
+        if self.handler.getSeq() - len(self.packet.data)>= self.packet.seq:
             print("packet",self.packet,"doesn't need to be resent")
-            return
+            
         else:
             print("HOLY SHIT HAVE TO RESENDDDDDDD!!!!!!")
         # if we're still waiting for the packet, resend it.
-        print("resending packet:",self.packet.seq,":",self.packet.data)
-        
-        #there's a chance that the packet will be lost:
-        if(random.random()>LOST_PACKET_PROBABILITY):
+            print("resending packet:",self.packet.seq,":",self.packet.data)
             
-            e = ReceivePacketEvent(self.handler, self.packet)
-            eventQueue.enqueue(e, t + TRANSMISSION_DELAY)
-        
-        # vv this is bad news
-        print("t is",t)
-        toe = TimeoutEvent(self.handler, self.packet)
-        eventQueue.enqueue(toe, t + 2*TRANSMISSION_DELAY)
+            #there's a chance that the packet will be lost:
+            if(random.random()>LOST_PACKET_PROBABILITY):
+                
+                e = ReceivePacketEvent(self.handler, self.packet)
+                eventQueue.enqueue(e, t + TRANSMISSION_DELAY)
+            
+            # timeout for the resent message 
+            print("t is",t)
+            toe = TimeoutEvent(self.handler, self.packet)
+            eventQueue.enqueue(toe, t + 2*TRANSMISSION_DELAY)
 
 class ReceivePacketEvent(TCPEvent):
     """
