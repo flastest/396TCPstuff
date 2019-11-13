@@ -51,6 +51,7 @@ def TCPSimulator():
     server.client = client
     client.queueRequestMessage(eventQueue, 0)
     while not eventQueue.isEmpty():
+        #print("Here lies the current event queue:",eventQueue)
         e,t = eventQueue.dequeueWithPriority()
         if EVENT_TRACE:
             print(str(e) + " at time " + str(t))
@@ -157,67 +158,40 @@ class TCPClient:
     
     def __init__(self):
         """Initializes the client structure."""
-    def __str___(self):
+    def __str__(self):
         return "Client"
 
 
     #returns the number of the packet it's lookingfor
     def getSeq(self):
         return self.seq
+    
 
 
-
-    def requestXPackets(self, eventQueue, t):
-        msg = input("Enter a message: ")
-        windowSize = input("how big should this window be?")
-        if (len(msg) != 0):
-            print("Client sends \"" + msg + "\"")
-            self.msgBytes = msg.encode("UTF-8")
-            self.seq = 0
-            self.ack = 0
-            self.sendXPackets(eventQueue, t,windowSize)
-
-    def sendXPackets(self,eventQueue,t,x):
+    def receivePacket(self, p, eventQueue, t):
+        """Handles receipt of the acknowledgment packet."""
+        self.seq = p.ack
+        self.ack = p.seq + len(p.data) # irrelevant, idk why this is here
         
-        #creates the packets
-        packets = []
-        for i in range(x):
-            nBytes = min(MAX_PACKET_DATA, len(self.msgBytes) - self.seq)
+        # this is where the stuff needs to go, the thing that tells
+        # it to keep track of all the acks it has and stuff.
+        # it needs to chill, the acks come in at whatever speed, but 
+        #maybe this should send the nextXPackets
+
+        #cool I got an ack, now I need to choose how to respond
+        
+
+        if self.seq < len(self.msgBytes) + len(p.data):
             
-            # if self.seq extends the amount of data in msgBytes, there're 
-            # no more packets to make
-            if self.seq > len(self.msgBytes):
-                break
-
-            data = self.msgBytes[self.seq:self.seq + nBytes]
-
-            p = TCPPacket(seq=self.seq,ack=self.ack,ACK =True, data=data) # no reason to have ack here?
-            #adding the checksum to the packet
-            p.checksum = (checksum16(p.toBytes()) ^ 0xFFFF ) 
-            packets.append[p]        
-            #add to sequence
-            self.seq += nBytes
+            self.sendXPackets(eventQueue,t,self.x)
+            #self.sendNextPacket(eventQueue, t)
+    
 
 
-
-
-        #now to send all the packets!
-        for p in packets:
-            e = ReceivePacketEvent(self.server, p)
-
-            #there's a chance that the packet will be lost:        
-            if(random.random()>LOST_PACKET_PROBABILITY):
-
-                eventQueue.enqueue(e, t + TRANSMISSION_DELAY)
-                if p.FIN:
-                    self.queueRequestMessage(eventQueue, t + ROUND_TRIP_TIME)
-            
-            #remember to add a timeout event
-            toe = TimeoutEvent(self.server, p)
-            eventQueue.enqueue(toe, t + 2*TRANSMISSION_DELAY)
-            t+=1
-
-
+    def queueRequestMessage(self, eventQueue, t):
+        """Enqueues a RequestMessageEvent at time t."""
+        e = RequestMessageEvent(self)
+        eventQueue.enqueue(e, t)
 
 
 
@@ -231,7 +205,72 @@ class TCPClient:
             self.ack = 0
             self.sendNextPacket(eventQueue, t)
 
-    
+
+
+    def requestXPackets(self, eventQueue, t):
+        msg = input("Enter a message: ")
+        windowSize = int(input("how big should this window be?"))
+        if (len(msg) != 0):
+            print("Client sends \"" + msg + "\"")
+            self.msgBytes = msg.encode("UTF-8")
+            self.seq = 0
+            self.ack = 0
+            self.x = windowSize
+            self.sendXPackets(eventQueue, t,windowSize)
+
+    def sendXPackets(self,eventQueue,t,x):
+        
+        #creates the packets
+        packets = []
+        for i in range(x):
+            nBytes = min(MAX_PACKET_DATA, len(self.msgBytes) - self.seq)
+            
+
+
+            data = self.msgBytes[self.seq:self.seq + nBytes]
+
+            p = TCPPacket(seq=self.seq,ack=self.ack,ACK =True, data=data) # no reason to have ack here?
+            #adding the checksum to the packet
+            p.checksum = (checksum16(p.toBytes()) ^ 0xFFFF ) 
+            packets.append(p)
+
+            # if self.seq extends the amount of data in msgBytes, there're 
+            # no more packets to make
+            if self.seq +  (len(p.data))>= len(self.msgBytes):
+                #this will be the last packet
+                print('all the packets are sent!')
+                
+                p.FIN = True
+                break
+
+            #add to sequence
+            self.seq += nBytes
+
+
+
+        #now to send all the packets!
+        for p in packets:
+            e = ReceivePacketEvent(self.server, p)
+
+            #there's a chance that the packet WON'T be lost:        
+            if(random.random()>LOST_PACKET_PROBABILITY):
+                print("packet %r isn't lost"% p.data)
+                eventQueue.enqueue(e, t + TRANSMISSION_DELAY)
+                if p.FIN:
+                    self.queueRequestMessage(eventQueue, 66 +t + ROUND_TRIP_TIME)
+            else: 
+                #if lost
+                print("packet %r is LOST!!!"% p.data)
+
+
+            #remember to add a timeout event
+            toe = TimeoutEvent(self.server, p)
+            eventQueue.enqueue(toe, t + 2*TRANSMISSION_DELAY)
+            t+=1
+        print("all packets in this batch are sent")
+        print("here's the event queue:",str(eventQueue))
+
+
 
 
     def sendNextPacket(self, eventQueue, t):
@@ -254,26 +293,22 @@ class TCPClient:
 
             eventQueue.enqueue(e, t + TRANSMISSION_DELAY)
             if p.FIN:
+                # if this is the last packet, it will start over. 
+                # instead, I think it should check to see if pqueue
+                # is empty, but idk how the while loop would continue.
                 self.queueRequestMessage(eventQueue, t + ROUND_TRIP_TIME)
         
         #remember to add a timeout event
-        toe = TimeoutEvent(self.server, p)
+        #toe = TimeoutEvent(self.server, p)
+        toe = TimeoutEvent(self, p)
         eventQueue.enqueue(toe, t + 2*TRANSMISSION_DELAY)
 
 
 
 
-    def receivePacket(self, p, eventQueue, t):
-        """Handles receipt of the acknowledgment packet."""
-        self.seq = p.ack
-        self.ack = p.seq + len(p.data) # irrelevant, idk why this is here
-        if self.seq < len(self.msgBytes):
-            self.sendNextPacket(eventQueue, t)
+    
 
-    def queueRequestMessage(self, eventQueue, t):
-        """Enqueues a RequestMessageEvent at time t."""
-        e = RequestMessageEvent(self)
-        eventQueue.enqueue(e, t)
+    
 
 class TCPServer:
     """
@@ -287,12 +322,18 @@ class TCPServer:
         self.ack = 0
         self.receivedPackets = []
 
-    def __str___(self):
+    def __str__(self):
         return "Server"
 
     #returns the number of the packet it's lookingfor
     def getSeq(self):
         return self.seq
+
+    def resetForNextMessage(self):
+        """Initializes the data structures for holding the message."""
+        self.msgBytes = bytearray()
+        self.ack = 0
+
 
     def receivePacket(self, p, eventQueue, t):
         """
@@ -300,6 +341,12 @@ class TCPServer:
         back in return.  This version assumes that the sequence numbers
         appear in the correct order.
         """
+
+        ##
+        ## THIS JUST SENDS THE ACK!!
+        ## 
+
+
 
         self.msgBytes.extend(p.data)
 
@@ -322,21 +369,20 @@ class TCPServer:
         if p.FIN:
             reply.FIN = True
             print("Server receives \"" + self.msgBytes.decode("UTF-8") + "\"")
+            print("Cool I got all the packets! ")
             self.resetForNextMessage()
         #adding the checksum to the packet
         reply.checksum = (checksum16(reply.toBytes()) ^ 0xFFFF ) 
 
+
+        # here is where we should send the ack
         e = ReceivePacketEvent(self.client, reply)
         eventQueue.enqueue(e, t + TRANSMISSION_DELAY)
         #remember to add a timeout event
         toe = TimeoutEvent(self.client, reply)
         eventQueue.enqueue(toe, t + 2*TRANSMISSION_DELAY)
 
-    def resetForNextMessage(self):
-        """Initializes the data structures for holding the message."""
-        self.msgBytes = bytearray()
-        #self.ack = 0
-
+    
 
 class TCPEvent:
     """
@@ -368,8 +414,8 @@ class RequestMessageEvent(TCPEvent):
         return "RequestMessage(client)"
 
     def dispatch(self, eventQueue, t):
-        self.client.requestMessage(eventQueue, t)
-
+        #self.client.requestMessage(eventQueue, t)
+        self.client.requestXPackets(eventQueue,t)
 
 
 class TimeoutEvent(TCPEvent):
@@ -390,10 +436,13 @@ class TimeoutEvent(TCPEvent):
     def dispatch(self,eventQueue,t):
 
         print("right now the",str(self.handler),"'s sequence is ",self.handler.getSeq())
-
+        #print("timeout event trigger")
         # nothing happens if we don't need this packet resent 
         if self.handler.getSeq() >= self.packet.seq:
+            print("packet",self.packet,"doesn't need to be resent")
             return
+        else:
+            print("HOLY SHIT HAVE TO RESENDDDDDDD!!!!!!")
         # if we're still waiting for the packet, resend it.
         print("resending packet:",self.packet.seq,":",self.packet.data)
         
@@ -439,8 +488,9 @@ class ReceivePacketEvent(TCPEvent):
         # print("the hex of that is ", hex(curentCheckSum + calculatedChecksum))
         if (curentCheckSum + calculatedChecksum) != 0xFFFF:
             print("checksum addition failed, got ",hex(curentCheckSum + checksum16(p.toBytes())))
- 
+            #should probably drop the packet if checksum fails...
 
+        # self.handler.receivePacket triggers the next packets to send
         self.handler.receivePacket(self.packet, eventQueue, t)
 
 # Startup code
