@@ -34,7 +34,7 @@ TRANSMISSION_DELAY = 5
 LOST_PACKET_PROBABILITY = 0.25
 ROUND_TRIP_TIME = 2 * TRANSMISSION_DELAY
 TIMEOUT = 2 * ROUND_TRIP_TIME
-DEBUG = True
+DEBUG = False
 
 
 
@@ -213,6 +213,14 @@ class TCPClient:
 
     def requestXPackets(self, eventQueue, t):
         msg = input("Enter a message: ")
+
+        #add the right amount of spaces to the end of the word to make it fit
+        # without this, the last ack is not a multiple of 4.
+        if False:
+            numSpaces = len(msg) % 4
+            msg += numSpaces * " "
+
+
         windowSize = int(input("how big should the receive window be?"))
         if (len(msg) != 0):
             print("Client sends \"" + msg + "\"")
@@ -246,6 +254,10 @@ class TCPClient:
                     print('all the packets are sent!')
                 
                 p.FIN = True
+                #at this point, also need to recalculate the checksum
+                p.checksum = 0x0000
+                p.checksum = (checksum16(p.toBytes()) ^ 0xFFFF ) 
+            
                 break
 
             #add to sequence
@@ -520,7 +532,7 @@ class ReceivePacketEvent(TCPEvent):
         # print("if you add those you get ",(curentCheckSum + calculatedChecksum))
         # print("the hex of that is ", hex(curentCheckSum + calculatedChecksum))
         if (curentCheckSum + calculatedChecksum) != 0xFFFF:
-            print("checksum addition failed, got ",hex(curentCheckSum + checksum16(p.toBytes())))
+            print("checksum addition for",self.packet.data,"failed, got ",hex(curentCheckSum + checksum16(p.toBytes())) )
             #should probably drop the packet if checksum fails...
 
 
