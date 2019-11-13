@@ -279,6 +279,7 @@ class TCPClient:
                     #self.queueRequestMessage(eventQueue, 66 +t + ROUND_TRIP_TIME)
             else: 
                 #if lost
+                #if DEBUG:
                 print("packet %r is LOST!!!"% p.data)
 
 
@@ -314,8 +315,6 @@ class TCPClient:
             eventQueue.enqueue(e, t + TRANSMISSION_DELAY)
             if p.FIN:
                 # if this is the last packet, it will start over. 
-                # instead, I think it should check to see if pqueue
-                # is empty, but idk how the while loop would continue.
                 self.queueRequestMessage(eventQueue, t + ROUND_TRIP_TIME)
         
         #remember to add a timeout event
@@ -376,28 +375,11 @@ class TCPServer:
             self.seq+= len(p.data)
             self.msgBytes.extend(p.data)
         
-        #this was to keep track of packets that have already been received: 
-        if False:
-            self.receivedPackets = []
-            self.receivedPackets.append(p.seq)
-            if DEBUG: 
-                print("here are the packets I've received:",self.receivedPackets )
-            pointOfLastCompleteSet = 0
-            #if this packet completes a set, then self.ack is incremented alot
-            for i in range(len(self.receivedPackets)):
-                
-                if (i * len(p.data)) in self.receivedPackets:
-                    if DEBUG:
-                        print("adding %r to the msg" % p.data)
-                    self.msgBytes.extend(p.data)
-                    pointOfLastCompleteSet = i
-                else:
-                    
-                    break
 
+        #there used to be something here that kept track of received packets
+        # so that client didn't need to resend EVERYTHING, but I didn't implement
+        # it well so I deleted it.
 
-            self.ack = self.receivedPackets[pointOfLastCompleteSet] + len(p.data)
-            self.seq = self.ack
         self.ack = self.seq
 
         if DEBUG:
@@ -487,10 +469,9 @@ class TimeoutEvent(TCPEvent):
                 print("packet",self.packet,"doesn't need to be resent")
             
         else:
-            if DEBUG:
-                print("HOLY SHIT HAVE TO RESENDDDDDDD!!!!!!")
-        # if we're still waiting for the packet, resend it.
-            print("resending packet:",self.packet.seq,":",self.packet.data)
+                # if we're still waiting for the packet, resend it.
+            
+            print("resending packet",self.packet.seq,":",self.packet.data,"and everything after it")
             
             #there's a chance that the packet will be lost:
             if(random.random()>LOST_PACKET_PROBABILITY):
