@@ -34,6 +34,9 @@ TRANSMISSION_DELAY = 5
 LOST_PACKET_PROBABILITY = 0.25
 ROUND_TRIP_TIME = 2 * TRANSMISSION_DELAY
 TIMEOUT = 2 * ROUND_TRIP_TIME
+DEBUG = True
+
+
 
 EVENT_TRACE = False              # Set this flag to enable event tracing
 
@@ -179,9 +182,9 @@ class TCPClient:
         #maybe this should send the nextXPackets
 
         #cool I got an ack, now I need to choose how to respond
-        
-        print("receiving packet! now I should send %r" % self.ack )
-        print(str(eventQueue))
+        if DEBUG:
+            print("receiving packet! now I should send %r" % self.ack )
+            print(str(eventQueue))
         if self.seq < len(self.msgBytes) + len(p.data):
             
             self.sendXPackets(eventQueue,t,self.x)
@@ -210,7 +213,7 @@ class TCPClient:
 
     def requestXPackets(self, eventQueue, t):
         msg = input("Enter a message: ")
-        windowSize = int(input("how big should this window be?"))
+        windowSize = int(input("how big should the receive window be?"))
         if (len(msg) != 0):
             print("Client sends \"" + msg + "\"")
             self.msgBytes = msg.encode("UTF-8")
@@ -239,7 +242,8 @@ class TCPClient:
             # no more packets to make
             if self.seq +  (len(p.data))>= len(self.msgBytes):
                 #this will be the last packet
-                print('all the packets are sent!')
+                if DEBUG:
+                    print('all the packets are sent!')
                 
                 p.FIN = True
                 break
@@ -255,7 +259,8 @@ class TCPClient:
 
             #there's a chance that the packet WON'T be lost:        
             if(random.random()>LOST_PACKET_PROBABILITY):
-                print("packet %r isn't lost"% p.data)
+                if DEBUG:
+                    print("packet %r isn't lost"% p.data)
                 eventQueue.enqueue(e, t + TRANSMISSION_DELAY)
                 #I'm moving this to when the serverreceives the last message
                 #if p.FIN:
@@ -269,8 +274,9 @@ class TCPClient:
             toe = TimeoutEvent(self.server, p)
             eventQueue.enqueue(toe, t + 2*TRANSMISSION_DELAY)
             t+=1
-        print("all packets in this batch are sent")
-        print("here's the event queue:",str(eventQueue))
+        if DEBUG:
+            print("all packets in this batch are sent")
+            print("here's the event queue:",str(eventQueue))
 
 
 
@@ -353,34 +359,47 @@ class TCPServer:
 
 
 
-        self.msgBytes.extend(p.data)
-
-        self.receivedPackets.append(p.seq)
-
-        print("here are the packets I've received:",self.receivedPackets )
-        pointOfLastCompleteSet = 0
-        #if this packet completes a set, then self.ack is incremented alot
-        for i in range(len(self.receivedPackets)):
-            
-            if (i * len(p.data)) in self.receivedPackets:
-
-                pointOfLastCompleteSet = i
-            else:
+        #self.msgBytes.extend(p.data)
+        if p.seq == self.seq:
+            self.seq+= len(p.data)
+            self.msgBytes.extend(p.data)
+        
+        #this was to keep track of packets that have already been received: 
+        if False:
+            self.receivedPackets = []
+            self.receivedPackets.append(p.seq)
+            if DEBUG: 
+                print("here are the packets I've received:",self.receivedPackets )
+            pointOfLastCompleteSet = 0
+            #if this packet completes a set, then self.ack is incremented alot
+            for i in range(len(self.receivedPackets)):
                 
-                break
+                if (i * len(p.data)) in self.receivedPackets:
+                    if DEBUG:
+                        print("adding %r to the msg" % p.data)
+                    self.msgBytes.extend(p.data)
+                    pointOfLastCompleteSet = i
+                else:
+                    
+                    break
 
 
-        self.ack = self.receivedPackets[pointOfLastCompleteSet] + len(p.data)
-        self.seq = self.ack
-        print("server received %r and its seq/ack is now %r" % (p.data,self.ack))
+            self.ack = self.receivedPackets[pointOfLastCompleteSet] + len(p.data)
+            self.seq = self.ack
+        self.ack = self.seq
+
+        if DEBUG:
+            print("server received %r and its seq/ack is now %r" % (p.data,self.ack))
         reply = TCPPacket(seq=self.seq, ack=self.ack, ACK=True)
         
 
 
         if p.FIN and self.ack >= p.seq: #I should also check here to make sure last complete set is here
             reply.FIN = True
+            
             print("Server receives \"" + self.msgBytes.decode("UTF-8") + "\"")
-            print("Cool I got all the packets! ")
+            if DEBUG:
+                print("Cool I got all the packets! ")
             self.resetForNextMessage()
             eventQueue.clear()
             self.client.queueRequestMessage(eventQueue, t + ROUND_TRIP_TIME)
@@ -445,16 +464,19 @@ class TimeoutEvent(TCPEvent):
     # have to resend packet if packet hasn't been received by the time this
     # event comes up.
     def dispatch(self,eventQueue,t):
-        print("TIMEOUT EVENT~!")
-        print("right now the",str(self.handler),"'s sequence is ",self.handler.getSeq())
+        if DEBUG:
+            print("TIMEOUT EVENT~!")
+            print("right now the",str(self.handler),"'s sequence is ",self.handler.getSeq())
 
-        print("I'm the timout event for %r with a seq of %r" % (self.packet.data,self.packet.seq))
+            print("I'm the timout event for %r with a seq of %r" % (self.packet.data,self.packet.seq))
         # nothing happens if we don't need this packet resent 
         if self.handler.getSeq() - len(self.packet.data)>= self.packet.seq:
-            print("packet",self.packet,"doesn't need to be resent")
+            if DEBUG:
+                print("packet",self.packet,"doesn't need to be resent")
             
         else:
-            print("HOLY SHIT HAVE TO RESENDDDDDDD!!!!!!")
+            if DEBUG:
+                print("HOLY SHIT HAVE TO RESENDDDDDDD!!!!!!")
         # if we're still waiting for the packet, resend it.
             print("resending packet:",self.packet.seq,":",self.packet.data)
             
@@ -465,7 +487,6 @@ class TimeoutEvent(TCPEvent):
                 eventQueue.enqueue(e, t + TRANSMISSION_DELAY)
             
             # timeout for the resent message 
-            print("t is",t)
             toe = TimeoutEvent(self.handler, self.packet)
             eventQueue.enqueue(toe, t + 2*TRANSMISSION_DELAY)
 
@@ -501,6 +522,8 @@ class ReceivePacketEvent(TCPEvent):
         if (curentCheckSum + calculatedChecksum) != 0xFFFF:
             print("checksum addition failed, got ",hex(curentCheckSum + checksum16(p.toBytes())))
             #should probably drop the packet if checksum fails...
+
+
 
         # self.handler.receivePacket triggers the next packets to send
         self.handler.receivePacket(self.packet, eventQueue, t)
